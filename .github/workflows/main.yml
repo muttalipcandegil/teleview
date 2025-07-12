@@ -1,0 +1,187 @@
+name: Prepare and Deploy TeleView
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  setup-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+
+    - name: Create required folders
+      run: |
+        mkdir -p app/view
+        mkdir -p pages/api
+        mkdir -p styles
+
+    - name: Create necessary files
+      run: |
+        echo "'use client'
+import { useState } from 'react'
+import { Buffer } from 'buffer'
+
+export default function Home() {
+  const [url, setUrl] = useState('')
+  const [viewerLink, setViewerLink] = useState('')
+
+  const handleSubmit = (e) => {
+    e.preventDefault()
+    if (!url.includes('https://api.telegram.org/file/bot')) {
+      alert('Geçerli bir Telegram dosya linki girin.')
+      return
+    }
+    const encoded = Buffer.from(url).toString('base64')
+    setViewerLink(\`/view?ref=\${encoded}\`)
+  }
+
+  return (
+    <main style={{ padding: 30, fontFamily: 'sans-serif' }}>
+      <h1>📄 TeleView</h1>
+      <p>Telegram’dan aldığın HTML dosya linkini yapıştır, içeriğini görüntüle ve paylaş.</p>
+      <form onSubmit={handleSubmit}>
+        <input
+          type='text'
+          placeholder='Telegram HTML dosya linki'
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          style={{ width: '100%', padding: 10, marginBottom: 10 }}
+        />
+        <button type='submit' style={{ padding: 10 }}>
+          Göster
+        </button>
+      </form>
+      {viewerLink && (
+        <p>
+          👇 Sayfa linki:<br />
+          <a href={viewerLink} target='_blank' rel='noopener noreferrer'>
+            {viewerLink}
+          </a>
+        </p>
+      )}
+    </main>
+  )
+}
+" > app/page.tsx
+
+        echo "export const dynamic = 'force-dynamic'
+
+export default async function ViewPage({ searchParams }) {
+  const encoded = searchParams.ref
+  if (!encoded) return <p>❌ Link eksik.</p>
+
+  try {
+    const decoded = Buffer.from(encoded, 'base64').toString()
+    const host = process.env.NEXT_PUBLIC_SITE_URL || 'localhost:3000'
+    const proxy = \`https://\${host}/api/fetch-html?ref=\${encoded}\`
+
+    const res = await fetch(proxy)
+    if (!res.ok) throw new Error(\`HTTP \${res.status}\`)
+    const html = await res.text()
+
+    return <div dangerouslySetInnerHTML={{ __html: html }} />
+  } catch (err) {
+    return <p>❌ İçerik alınamadı: \${String(err)}</p>
+  }
+}
+" > app/view/page.tsx
+
+        echo "import type { NextApiRequest, NextApiResponse } from 'next'
+import fetch from 'node-fetch'
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  const encoded = req.query.ref
+  if (!encoded || typeof encoded !== 'string') {
+    return res.status(400).send('Parametre eksik.')
+  }
+
+  try {
+    const decodedUrl = Buffer.from(encoded, 'base64').toString()
+
+    if (!decodedUrl.startsWith('https://api.telegram.org/file/bot')) {
+      return res.status(403).send('Geçersiz Telegram linki.')
+    }
+
+    const fetchRes = await fetch(decodedUrl)
+    const html = await fetchRes.text()
+
+    res.setHeader('Cache-Control', 's-maxage=60')
+    res.setHeader('Content-Type', 'text/html')
+    res.status(200).send(html)
+  } catch (err) {
+    res.status(500).send(\`Proxy hatası: \${err.message}\`)
+  }
+}
+" > pages/api/fetch-html.ts
+
+        echo "{
+  \"name\": \"teleview\",
+  \"version\": \"1.0.0\",
+  \"private\": true,
+  \"scripts\": {
+    \"dev\": \"next dev\",
+    \"build\": \"next build\",
+    \"start\": \"next start\"
+  },
+  \"dependencies\": {
+    \"next\": \"14.0.0\",
+    \"react\": \"18.2.0\",
+    \"react-dom\": \"18.2.0\",
+    \"node-fetch\": \"^3.3.2\"
+  }
+}
+" > package.json
+
+        echo "{
+  \"compilerOptions\": {
+    \"target\": \"esnext\",
+    \"module\": \"esnext\",
+    \"lib\": [\"dom\", \"dom.iterable\", \"esnext\"],
+    \"skipLibCheck\": true,
+    \"strict\": true,
+    \"esModuleInterop\": true,
+    \"forceConsistentCasingInFileNames\": true,
+    \"moduleResolution\": \"bundler\",
+    \"resolveJsonModule\": true,
+    \"isolatedModules\": true,
+    \"jsx\": \"preserve\"
+  },
+  \"include\": [\"next-env.d.ts\", \"**/*.ts\", \"**/*.tsx\"],
+  \"exclude\": [\"node_modules\"]
+}
+" > tsconfig.json
+
+        echo "node_modules
+.next
+.env
+.DS_Store
+" > .gitignore
+
+        echo "/** @type {import('next').NextConfig} */
+const nextConfig = {
+  reactStrictMode: true,
+  experimental: {
+    appDir: true,
+  },
+}
+
+module.exports = nextConfig
+" > next.config.js
+    - name: Install dependencies
+      run: npm install
+
+    - name: Build project
+      run: npm run build
+
+    # Burada istersen Vercel CLI ile deploy da yapabilirsin
+    # - name: Vercel Deploy
+    #   run: npx vercel --prod --token ${{ secrets.VERCEL_TOKEN }}
